@@ -1,0 +1,11 @@
+--- Makefile
++++ Makefile
+@@ -71,6 +71,8 @@
+ 
+ VL_FLAGS = --exe
+ VL_FLAGS += --language 1800-2009 --assert -Wall -Wpedantic
++# temp
++VL_FLAGS += --public-flat-rw
+ VL_FLAGS += -Wno-DECLFILENAME -Wno-REDEFMACRO
+ VL_FLAGS += --x-initial unique --x-assign unique
+ VL_FLAGS += verilator.vlt

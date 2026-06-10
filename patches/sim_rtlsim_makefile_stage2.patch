@@ -1,0 +1,11 @@
+--- Makefile
++++ Makefile
+@@ -66,6 +66,8 @@
+ SRCS = $(SW_COMMON_DIR)/util.cpp $(SW_COMMON_DIR)/mem.cpp $(SW_COMMON_DIR)/softfloat_ext.cpp $(SW_COMMON_DIR)/rvfloats.cpp $(SW_COMMON_DIR)/dram_sim.cpp
+ SRCS += $(DPI_DIR)/util_dpi.cpp $(DPI_DIR)/float_dpi.cpp
+ SRCS += $(SRC_DIR)/processor.cpp
++SRCS += $(SRC_DIR)/fault_injection.cpp
++SRCS += $(SRC_DIR)/fault_targets.cpp
+ 
+ TOP = rtlsim_shim
+ 

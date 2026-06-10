@@ -1,0 +1,35 @@
+--- processor.cpp
++++ processor.cpp
+@@ -35,6 +35,9 @@
+ #include <dram_sim.h>
+ #include <util.h>
+ 
++#include "Vrtlsim_shim___024root.h"
++#include "fault_injection.h"
++
+ #ifndef MEM_CLOCK_RATIO
+ #define MEM_CLOCK_RATIO 1
+ #endif
+@@ -210,6 +213,8 @@
+     }
+   }
+ 
++  uint64_t next_fault_timestamp = 150; 
++
+   void tick() {
+ 
+     device_->clk = 0;
+@@ -220,6 +225,13 @@
+     device_->clk = 1;
+     this->eval();
+ 
++    if (timestamp >= next_fault_timestamp)
++    {
++      inject_random_fault(device_->rootp);
++      std::cout << "Bit flipped at timestamp " << timestamp << std::endl;
++      next_fault_timestamp = get_next_fault_time(timestamp);
++    }
++
+     this->mem_bus_eval(1);
+ 
+     dram_sim_.tick();
