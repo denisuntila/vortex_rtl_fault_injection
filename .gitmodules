@@ -1,3 +1,4 @@
 [submodule "vortex"]
 	path = vortex
 	url = https://github.com/vortexgpgpu/vortex.git
+	ignore = all
