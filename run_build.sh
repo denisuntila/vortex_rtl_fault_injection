@@ -34,8 +34,10 @@ run_stage2() {
     [ -f "$STAGE2_MAKEFILE_PATCH" ] && patch -N "$TARGET_FILE" "$STAGE2_MAKEFILE_PATCH" || true
 
     echo "=== Copying instrumentation sources into rtlsim root ==="
+    mv "$RTLSIM_DIR/main.cpp" "$RTLSIM_DIR/main.cpp.old"
     cp -a "$ROOT_DIR/src/." "$RTLSIM_DIR/"
     cp -a "$ROOT_DIR/include/." "$RTLSIM_DIR/"
+
 
     echo "=== Rebuilding runtime ==="
     # We need to copy all the files to the proper paths
