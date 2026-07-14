@@ -14,7 +14,7 @@ Clone the repository and initialize the necessary submodules:
 
 ```bash
 # Clone the repository
-git clone [https://github.com/denisuntila/vortex_rtl_fault_injection.git](https://github.com/denisuntila/vortex_rtl_fault_injection.git)
+git clone https://github.com/denisuntila/vortex_rtl_fault_injection.git
 cd vortex_rtl_fault_injection
 
 # Initialize and update submodules
