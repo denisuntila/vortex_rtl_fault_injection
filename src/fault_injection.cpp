@@ -10,10 +10,10 @@ struct TargetComparator {
     }
 };
 
-void inject_random_fault(Vrtlsim_shim___024root* rootp) {
+uint32_t inject_random_fault(Vrtlsim_shim___024root* rootp) {
     if (FAULT_RULER_SIZE == 0 || BIT_TOTALI_VORTEX == 0) {
         std::cerr << "[Fault Injection] Error: Fault ruler metadata is uninitialized or zero.\n";
-        return;
+        return 0xFFFFFFFF;
     }
 
     // 1. Roll a single global uniform random dart across the total silicon area
@@ -31,7 +31,7 @@ void inject_random_fault(Vrtlsim_shim___024root* rootp) {
 
     if (it == FAULT_RULER + FAULT_RULER_SIZE) {
         std::cerr << "[Fault Injection] Error: Random dart fell out of bounds.\n";
-        return;
+        return 0xFFFFFFFF;
     }
 
     // 3. Compute local block offset relative to the target's starting boundary
@@ -98,6 +98,7 @@ void inject_random_fault(Vrtlsim_shim___024root* rootp) {
             break;
         }
     }
+    return dart;
 }
 
 

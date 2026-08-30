@@ -1,1 +1,9 @@
 build/
+*.db
+*.log
+*.old
+*.db-*
+*.log.*
+
+*fault_targets.cpp
+

@@ -25,8 +25,8 @@
  
 +    if (timestamp >= next_fault_timestamp)
 +    {
-+      inject_random_fault(device_->rootp);
-+      std::cout << "Bit flipped at timestamp " << timestamp << std::endl;
++      int flipped_bit_index = inject_random_fault(device_->rootp);
++      std::cout << "{\"type\":\"injection\",\"timestamp\":" << timestamp << ",\"bit_index\":" << flipped_bit_index << "}" << std::endl;
 +      next_fault_timestamp = get_next_fault_time(timestamp);
 +    }
 +

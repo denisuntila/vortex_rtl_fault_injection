@@ -1,5 +1,14 @@
 #!/bin/bash
 
+# Vortex hardware configuration
+NUM_CORES=${NUM_CORES:-2}
+NUM_WARPS=${NUM_WARPS:-2}
+NUM_THREADS=${NUM_THREADS:-8}
+
+CONFIGS="-DNUM_CORES=${NUM_CORES} \
+-DNUM_WARPS=${NUM_WARPS} \
+-DNUM_THREADS=${NUM_THREADS}"
+
 set -e
 
 XLEN=32
@@ -34,17 +43,42 @@ run_stage2() {
     [ -f "$STAGE2_MAKEFILE_PATCH" ] && patch -N "$TARGET_FILE" "$STAGE2_MAKEFILE_PATCH" || true
 
     echo "=== Copying instrumentation sources into rtlsim root ==="
-    mv "$RTLSIM_DIR/main.cpp" "$RTLSIM_DIR/main.cpp.old"
     cp -a "$ROOT_DIR/src/." "$RTLSIM_DIR/"
     cp -a "$ROOT_DIR/include/." "$RTLSIM_DIR/"
 
+    echo "=== Replacing vecadd regression test ==="
+    VECADD_SRC="$ROOT_DIR/tests/vecadd.cpp"
+    VECADD_DIR="$ROOT_DIR/vortex/tests/regression/vecadd"
+    VECADD_MAIN="$VECADD_DIR/main.cpp"
+
+    if [ -f "$VECADD_SRC" ] && [ -d "$VECADD_DIR" ]; then
+        if [ -f "$VECADD_MAIN" ]; then
+            mv "$VECADD_MAIN" "$VECADD_MAIN.old"
+            echo "Backed up $VECADD_MAIN -> $VECADD_MAIN.old"
+        fi
+
+        cp "$VECADD_SRC" "$VECADD_MAIN"
+        echo "Copied $VECADD_SRC -> $VECADD_MAIN"
+    else
+        echo "Warning: vecadd source or destination directory missing, skipping."
+    fi
+
+    echo "=== Rebuilding tests ==="
+    cd "$BUILD_DIR"
+
+    CONFIGS="$CONFIGS" \
+    make -C tests clean
+
+    CONFIGS="$CONFIGS" \
+    make -C tests -j$(nproc)
 
     echo "=== Rebuilding runtime ==="
-    # We need to copy all the files to the proper paths
-    cd "$BUILD_DIR"
     ../vortex/configure --xlen=$XLEN --tooldir=$TOOLDIR
-    
+
+    CONFIGS="$CONFIGS" \
     make -C runtime clean
+
+    CONFIGS="$CONFIGS" \
     make -C runtime -j$(nproc)
 
     echo "=== DONE! ==="
@@ -97,7 +131,12 @@ fi
 echo "=== Sourcing Environment Variables ==="
 source ./ci/toolchain_env.sh
 
+
+echo "=== Hardware configuration ==="
+echo "$CONFIGS"
+
 echo "=== Stage 1 compilation ==="
+CONFIGS="$CONFIGS" \
 make -s -j$(nproc)
 echo "=== Stage 1 completed successfully ==="
 
