@@ -30,7 +30,7 @@ extern const uint32_t BIT_TOTALI_VORTEX;
 extern const FaultTarget FAULT_RULER[];
 extern const size_t FAULT_RULER_SIZE;
 
-uint32_t inject_random_fault(Vrtlsim_shim___024root* rootp);
+uint32_t inject_random_fault(Vrtlsim_shim___024root* rootp, uint32_t dart = 0xFFFFFFFF);
 
 
 static constexpr double lambda = 0.001;

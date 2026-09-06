@@ -1,33 +1,150 @@
 --- processor.cpp
 +++ processor.cpp
-@@ -35,6 +35,9 @@
+@@ -35,6 +35,11 @@
  #include <dram_sim.h>
  #include <util.h>
  
 +#include "Vrtlsim_shim___024root.h"
 +#include "fault_injection.h"
++#include <cstdlib>
++#include <random>
 +
  #ifndef MEM_CLOCK_RATIO
  #define MEM_CLOCK_RATIO 1
  #endif
-@@ -210,6 +213,8 @@
+@@ -104,6 +109,10 @@
+     // create RTL module instance
+     device_ = new Vrtlsim_shim();
+ 
++    // read fault-injection env vars (FAULT_TIMESTAMP / FAULT_BIT_INDEX);
++    // falls back to default random fault schedule if unset/invalid
++    this->configure_fault_injection();
++
+   #ifdef VCD_OUTPUT
+     Verilated::traceEverOn(true);
+     tfp_ = new VerilatedVcdC();
+@@ -185,6 +194,88 @@
+ 
+ private:
+ 
++  // Configures fault injection from the environment, in priority order:
++  //   1) FAULT_TIMESTAMP + FAULT_BIT_INDEX -> deterministic single-shot:
++  //      exactly one fault, at the exact timestamp, with the exact dart.
++  //   2) FAULT_RANDOM_MAX_TIMESTAMP -> random single-shot: exactly one
++  //      fault, at a timestamp drawn uniformly from [150, max], with a
++  //      randomly chosen dart (same as the default schedule's draw).
++  //   3) neither -> default continuous random fault schedule (unchanged).
++  void configure_fault_injection() {
++    if (this->configure_deterministic_fault()) {
++      return;
++    }
++    this->configure_random_single_shot_fault();
++  }
++
++  // Returns true if deterministic single-shot mode was successfully
++  // enabled from FAULT_TIMESTAMP/FAULT_BIT_INDEX.
++  bool configure_deterministic_fault() {
++    const char* ts_env  = std::getenv("FAULT_TIMESTAMP");
++    const char* bit_env = std::getenv("FAULT_BIT_INDEX");
++
++    if (!ts_env && !bit_env) {
++      return false;
++    }
++
++    if (!ts_env || !bit_env) {
++      std::cerr << "[Fault Injection] Warning: only one of FAULT_TIMESTAMP/FAULT_BIT_INDEX is set; "
++                    "both are required for deterministic single-shot mode. Ignoring." << std::endl;
++      return false;
++    }
++
++    char* end = nullptr;
++    uint64_t ts = std::strtoull(ts_env, &end, 10);
++    bool ts_ok = (end != ts_env) && (*end == '\0');
++
++    end = nullptr;
++    uint64_t bit = std::strtoull(bit_env, &end, 10);
++    bool bit_ok = (end != bit_env) && (*end == '\0') && (bit <= 0xFFFFFFFFull);
++
++    if (!ts_ok || !bit_ok) {
++      std::cerr << "[Fault Injection] Warning: FAULT_TIMESTAMP/FAULT_BIT_INDEX set but could not "
++                    "be parsed as integers; ignoring." << std::endl;
++      return false;
++    }
++
++    single_shot_mode_ = true;
++    fault_dart_fixed_ = true;
++    fault_timestamp_  = ts;
++    fault_dart_       = static_cast<uint32_t>(bit);
++    std::cerr << "[Fault Injection] Deterministic single-shot mode: timestamp=" << fault_timestamp_
++               << ", bit_index=" << fault_dart_ << std::endl;
++    return true;
++  }
++
++  // Enables random single-shot mode from FAULT_RANDOM_MAX_TIMESTAMP, if set
++  // and valid. Falls through silently (default schedule) otherwise.
++  void configure_random_single_shot_fault() {
++    const char* max_env = std::getenv("FAULT_RANDOM_MAX_TIMESTAMP");
++    if (!max_env) {
++      return;
++    }
++
++    char* end = nullptr;
++    uint64_t max_ts = std::strtoull(max_env, &end, 10);
++    bool max_ok = (end != max_env) && (*end == '\0');
++
++    const uint64_t min_ts = 150;
++    if (!max_ok || max_ts < min_ts) {
++      std::cerr << "[Fault Injection] Warning: FAULT_RANDOM_MAX_TIMESTAMP could not be parsed or is "
++                    "less than " << min_ts << "; falling back to default random fault schedule." << std::endl;
++      return;
++    }
++
++    std::mt19937_64 gen(std::random_device{}());
++    std::uniform_int_distribution<uint64_t> dist(min_ts, max_ts);
++
++    single_shot_mode_ = true;
++    fault_dart_fixed_ = false;
++    fault_timestamp_  = dist(gen);
++    std::cerr << "[Fault Injection] Random single-shot mode: timestamp=" << fault_timestamp_
++               << " (drawn from [" << min_ts << ", " << max_ts << "])" << std::endl;
++  }
++
+   void reset() {
+     this->mem_bus_reset();
+     this->dcr_bus_reset();
+@@ -210,6 +301,14 @@
      }
    }
  
-+  uint64_t next_fault_timestamp = 150; 
++  bool single_shot_mode_ = false;
++  bool fault_dart_fixed_ = false;
++  uint64_t fault_timestamp_ = 0;
++  uint32_t fault_dart_ = 0;
++  bool fault_fired_ = false;
++
++  uint64_t next_fault_timestamp = 150;
 +
    void tick() {
  
      device_->clk = 0;
-@@ -220,6 +225,13 @@
+@@ -220,6 +319,22 @@
      device_->clk = 1;
      this->eval();
  
-+    if (timestamp >= next_fault_timestamp)
-+    {
-+      int flipped_bit_index = inject_random_fault(device_->rootp);
-+      std::cout << "{\"type\":\"injection\",\"timestamp\":" << timestamp << ",\"bit_index\":" << flipped_bit_index << "}" << std::endl;
-+      next_fault_timestamp = get_next_fault_time(timestamp);
++    if (single_shot_mode_) {
++      if (!fault_fired_ && timestamp >= fault_timestamp_) {
++        int flipped_bit_index = fault_dart_fixed_
++            ? inject_random_fault(device_->rootp, fault_dart_)
++            : inject_random_fault(device_->rootp);
++        std::cout << "{\"type\":\"injection\",\"timestamp\":" << timestamp << ",\"bit_index\":" << flipped_bit_index << "}" << std::endl;
++        fault_fired_ = true;
++      }
++    } else {
++      if (timestamp >= next_fault_timestamp) {
++        int flipped_bit_index = inject_random_fault(device_->rootp);
++        std::cout << "{\"type\":\"injection\",\"timestamp\":" << timestamp << ",\"bit_index\":" << flipped_bit_index << "}" << std::endl;
++        next_fault_timestamp = get_next_fault_time(timestamp);
++      }
 +    }
 +
      this->mem_bus_eval(1);

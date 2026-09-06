@@ -10,16 +10,19 @@ struct TargetComparator {
     }
 };
 
-uint32_t inject_random_fault(Vrtlsim_shim___024root* rootp) {
+uint32_t inject_random_fault(Vrtlsim_shim___024root* rootp, uint32_t dart) {
     if (FAULT_RULER_SIZE == 0 || BIT_TOTALI_VORTEX == 0) {
         std::cerr << "[Fault Injection] Error: Fault ruler metadata is uninitialized or zero.\n";
         return 0xFFFFFFFF;
     }
 
-    // 1. Roll a single global uniform random dart across the total silicon area
-    static std::mt19937 gen(std::random_device{}());
-    std::uniform_int_distribution<uint32_t> dist(0, BIT_TOTALI_VORTEX - 1);
-    uint32_t dart = dist(gen);
+    if (0xFFFFFFFF == dart)
+    {
+        // 1. Roll a single global uniform random dart across the total silicon area
+        static std::mt19937 gen(std::random_device{}());
+        std::uniform_int_distribution<uint32_t> dist(0, BIT_TOTALI_VORTEX - 1);
+        dart = dist(gen);
+    }
 
     // 2. O(log N) binary search to find the target structure hit by the dart
     const FaultTarget* it = std::lower_bound(
@@ -52,48 +55,48 @@ uint32_t inject_random_fault(Vrtlsim_shim___024root* rootp) {
     // 5. Compute base memory address of the structural block
     uint8_t* base_byte_ptr = reinterpret_cast<uint8_t*>(rootp) + it->offset;
 
+    // 5b. Flat element index into the memory_grid: each consecutive instance
+    //     occupies `array_depth` slots, so the stride between instances is
+    //     array_depth, not 1. (Fixes silent mis-targeting when a target has
+    //     both consecutive_index > 0 and unpacked_row_index > 0.)
+    uint32_t flat_element_index = consecutive_index * it->array_depth + unpacked_row_index;
+
     // 6. Execute branchless memory manipulation based on native Verilator types
     // The combined stride accurately handles both individual scalars and complex arrays.
     switch (it->type) {
         case CDATA_8: {
             uint8_t* memory_grid = reinterpret_cast<uint8_t*>(base_byte_ptr);
-            uint32_t element_stride = consecutive_index + unpacked_row_index;
-            memory_grid[element_stride] ^= (1U << target_bit_index);
+            memory_grid[flat_element_index] ^= (1U << target_bit_index);
             break;
         }
         case SDATA_16: {
             uint16_t* memory_grid = reinterpret_cast<uint16_t*>(base_byte_ptr);
-            uint32_t element_stride = consecutive_index + unpacked_row_index;
-            memory_grid[element_stride] ^= (1U << target_bit_index);
+            memory_grid[flat_element_index] ^= (1U << target_bit_index);
             break;
         }
         case IDATA_32: {
             uint32_t* memory_grid = reinterpret_cast<uint32_t*>(base_byte_ptr);
-            uint32_t element_stride = consecutive_index + unpacked_row_index;
-            memory_grid[element_stride] ^= (1U << target_bit_index);
+            memory_grid[flat_element_index] ^= (1U << target_bit_index);
             break;
         }
         case QDATA_64: {
             uint64_t* memory_grid = reinterpret_cast<uint64_t*>(base_byte_ptr);
-            uint32_t element_stride = consecutive_index + unpacked_row_index;
-            memory_grid[element_stride] ^= (1ULL << target_bit_index);
+            memory_grid[flat_element_index] ^= (1ULL << target_bit_index);
             break;
         }
         case WIDE_512: {
             // Verilator structures wide signals (> 64 bits) as flat uint32_t subarrays.
             // We map down to the exact 32-bit subword window containing the target bit.
             uint32_t* memory_grid = reinterpret_cast<uint32_t*>(base_byte_ptr);
-            
+
             uint32_t sub_word_32 = target_bit_index / 32;
             uint32_t bit_window  = target_bit_index % 32;
-            
+
             // Fixed stride layout (512 bits / 32 bits = 16 words per discrete element)
-            const uint32_t words_per_element = 16; 
-            
-            uint32_t flat_wide_stride = (consecutive_index * words_per_element) + 
-                                        (unpacked_row_index * words_per_element) + 
-                                        sub_word_32;
-                                        
+            const uint32_t words_per_element = 16;
+
+            uint32_t flat_wide_stride = flat_element_index * words_per_element + sub_word_32;
+
             memory_grid[flat_wide_stride] ^= (1U << bit_window);
             break;
         }
