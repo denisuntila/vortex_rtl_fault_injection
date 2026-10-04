@@ -1,0 +1,27 @@
+# Sweep v2 (injector corretto). Colonne: label, bit_index, cicli originali SDC (o -), nota
+# I cicli originali valgono per il bit FISICO colpito nella vecchia campagna; per i bit
+# rimappati (scoreboard, ex stream_pack.c) l'indice nuovo punta allo stesso bit fisico.
+c1.warp_pcs.a	935546	9486,44774	warp 0, bit 23 del PC
+c1.warp_pcs.b	481869	2870	warp 1, bit 30 del PC
+c1.warp_pcs.c	481867	11092	warp 1, bit 28 del PC (ex stream_pack.c, bit 481675 col vecchio injector)
+c0.warp_pcs.a	718359	42482	warp 1, bit 3 del PC
+c0.warp_pcs.b	264616	22428	warp 0, bit 4 del PC
+c0.thread_masks.a	9306	23052,27796	warp 0 lane 4
+c0.thread_masks.b	3961	6290	warp 1 lane 2
+c1.thread_masks.a	25611	6470	warp 1 lane 5
+c1.thread_masks.b	16546	22104	warp 0 lane 6
+c0.mscratch.a	434959	5684	bit 15
+c0.mscratch.b	434973	9640	bit 29
+c1.mscratch.a	1105860	8230,12924	bit 5
+c1.mscratch.b	1620828	4538	bit 10
+c0.sb0.pipe	272655	51410	staging_buf[0] g_shift.pipe bit 18 (ex 272322)
+c0.sb1.pipe	273738	31794	staging_buf[1] g_shift.pipe bit 106 (ex 727119)
+c1.sb1.pipe	944543	39848	staging_buf[1] g_shift.pipe bit 0 (ex 1459173)
+c1.sb0.pipe	943656	23620	staging_buf[0] g_shift.pipe bit 108 (ex 943323)
+c0.stream_pack.real	935349	-	stream_pack.data_out bit 80, ora colpito davvero (controllo)
+ic.data_store	114042	33766	icache data store
+ic.mshr_store	1180467	25918	icache MSHR
+ic.tag_store	1062	9784	icache tag_store[1].do_write (strobe di scrittura del tag)
+ic.core_rsp_queue	1154946	33104	icache coda di risposta
+c0.ctrl.gpr_rdata	291777	-	controllo dati per-lane: gpr_ram[0] rdata_r bit 128
+c0.ctrl.opc_out	290386	-	controllo dati per-lane: operand collector out_buf.data_out bit 430

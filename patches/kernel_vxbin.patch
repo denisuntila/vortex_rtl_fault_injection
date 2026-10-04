@@ -1,0 +1,23 @@
+diff --git a/kernel/scripts/vxbin.py b/kernel/scripts/vxbin.py
+index 8cf44bb8d..1502c9264 100755
+--- a/kernel/scripts/vxbin.py
++++ b/kernel/scripts/vxbin.py
+@@ -19,6 +19,7 @@ import subprocess
+ import struct
+ import sys
+ import re
++import tempfile
+ 
+ def get_vma_size(elf_file):
+     try:
+@@ -75,7 +76,9 @@ def create_vxbin_binary(input_elf, output_bin, objcopy_path):
+     max_vma = max(max_vma, end)
+ 
+     # Create a binary data from the ELF file using objcopy
+-    temp_bin_path = '/tmp/temp_kernel.bin'
++    # unique temp file: a fixed path races between parallel runs
++    _fd, temp_bin_path = tempfile.mkstemp(prefix="vxbin_", suffix=".bin")
++    os.close(_fd)
+     subprocess.check_call([objcopy_path, '-O', 'binary', input_elf, temp_bin_path])
+ 
+     # Read the binary file to determine its size

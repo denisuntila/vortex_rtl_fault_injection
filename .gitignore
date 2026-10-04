@@ -1,9 +1,41 @@
+# --- build e artefatti generati ---
 build/
-*.db
-*.log
-*.old
-*.db-*
-*.log.*
-
 *fault_targets.cpp
 
+# --- database, log, backup ---
+*.db
+*.db-*
+*.log
+*.log.*
+*.old
+*.out
+nohup.out
+
+# --- Python ---
+__pycache__/
+*.pyc
+
+# --- tests/ocl_test: si versiona solo il codice ---
+# Tutto il resto (sweep, giri di bisezione, shard, manifest, results.csv,
+# tracce golden/fault, log delle campagne, TSV del recheck, pairs-file,
+# copie dell'header Verilator) viene generato dagli script.
+tests/ocl_test/*
+!tests/ocl_test/*.py
+!tests/ocl_test/*.sh
+!tests/ocl_test/*.sql
+!tests/ocl_test/*.md
+!tests/ocl_test/*.cpp
+!tests/ocl_test/*.cl
+!tests/ocl_test/*.h
+!tests/ocl_test/Makefile
+!tests/ocl_test/CMakeLists.txt
+# ...tranne le copie dell'header Verilator (≈6 MB, rigenerabili dalla build)
+tests/ocl_test/Vrtlsim_shim___024root*.h
+
+# --- file di lavoro nella root del repo ---
+/kernel_syms.txt
+/kernel_dis.txt
+/fix_check*.txt
+/faults_to_recheck*.txt
+/sdc_pairs/
+/sweep_p*/

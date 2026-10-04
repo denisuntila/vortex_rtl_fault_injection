@@ -60,6 +60,7 @@ run_one() {
     --cwd "$CWD" \
     --timeout "$TIMEOUT" \
     --save-crash-log \
+    --save-masked-injections \
     --command "${fault_env}${ENV_COMMON} ${BINARY_CMD}"
 }
 

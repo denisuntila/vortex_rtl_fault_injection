@@ -284,6 +284,118 @@ class VerilatorBitMapper:
             "fault_ruler_consecutive_count": entry["consecutive_count"],
         }
 
+    # ------------------------------------------------------------------
+    # Legacy mode: what the OLD injector (before the fix) really flipped.
+    #   - entry lookup: first entry with max_cumulato >= dart (comparator `<`),
+    #     so a dart equal to a run's end hits one element past that run;
+    #   - WIDE_512: element stride fixed at 16 words instead of N of VlWide<N>.
+    # The physical position is mapped back to a signal assuming members are
+    # laid out contiguously in declaration order (true inside a run of
+    # same-shape members); past the end of a run the following declarations
+    # of the header are walked with natural C++ alignment (best effort).
+    # ------------------------------------------------------------------
+
+    _SIZES = {"CData": (1, 1), "SData": (2, 2), "IData": (4, 4), "QData": (8, 8)}
+
+    def _decl_size(self, decl: str):
+        """(size, align) in bytes of a member declaration, or None if unknown."""
+        m = re.match(r"\s*VlUnpacked<\s*(.+?)\s*,\s*(\d+)\s*>\s+\w+\s*$", decl)
+        if m:
+            inner = self._decl_size(m.group(1) + " x")
+            return None if inner is None else (inner[0] * int(m.group(2)), inner[1])
+        m = re.match(r"\s*VlWide<(\d+)>", decl)
+        if m:
+            return (4 * int(m.group(1)), 4)
+        m = re.match(r"\s*(CData|SData|IData|QData)\b", decl)
+        if m:
+            return self._SIZES[m.group(1)]
+        if re.search(r"\*\s*\w+\s*$", decl):
+            return (8, 8)
+        return None
+
+    def _member_decls(self):
+        """Ordered list of (name, decl) for the member statements of the class."""
+        if getattr(self, "_decls", None) is None:
+            # drop comments but keep Verilator's /*msb:lsb*/ width annotations
+            clean = re.sub(r"/\*(?!\d+:\d+\*/).*?\*/|//[^\n]*", " ", self.class_content, flags=re.S)
+            decls = []
+            for st in clean.split(";"):
+                st = re.sub(r"(struct\s*\{|\})", " ", st).strip()
+                if not st or "(" in st or st.startswith(("static", "public", "private", "friend", "using")):
+                    continue
+                m = re.search(r"(\w+)\s*$", st)
+                if m:
+                    decls.append((m.group(1), st))
+            self._decls = decls
+            self._decl_index = {n: i for i, (n, _) in enumerate(decls)}
+        return self._decls
+
+    def _resolve_past(self, last_name: str, byte_past_end: int, bit_in_byte: int) -> Dict:
+        """What lies `byte_past_end` bytes after the end of member `last_name`."""
+        decls = self._member_decls()
+        i = self._decl_index.get(last_name)
+        if i is None:
+            return {"real_signal_name": None, "note": "layout unknown"}
+        pos = 0  # bytes from the end of last_name (run ends are 4-byte aligned)
+        for name, decl in decls[i + 1:]:
+            sz = self._decl_size(decl)
+            if sz is None:
+                return {"real_signal_name": None, "note": f"layout unknown at {name}"}
+            size, align = sz
+            pad = (-pos) % align
+            if byte_past_end < pos + pad:
+                return {"real_signal_name": "<padding>", "note": "padding between members"}
+            pos += pad
+            if byte_past_end < pos + size:
+                return {"real_signal_name": name, "real_element": 0,
+                        "real_bit": (byte_past_end - pos) * 8 + bit_in_byte,
+                        "note": "outside the labelled run"}
+            pos += size
+        return {"real_signal_name": None, "note": "past the end of the class"}
+
+    def query_bit_legacy(self, target_bit: int) -> Dict:
+        base = self.query_bit(target_bit)
+        if "error" in base:
+            return base
+        # old lookup: first entry whose max_cumulato (= end_bit + 1) >= dart
+        if getattr(self, "_ends", None) is None:
+            self._ends = [e["end_bit"] + 1 for e in self.memory_map]
+        k = bisect.bisect_left(self._ends, target_bit)
+        entry = self.memory_map[k]
+        local = target_bit - entry["start_bit"]          # may equal the run size
+        per = entry["element_bits"] * entry["array_depth"]
+        cons, rem = divmod(local, per)
+        row, ib = divmod(rem, entry["element_bits"])
+        flat = cons * entry["array_depth"] + row
+        n_elem = entry["array_depth"] * entry["consecutive_count"]
+
+        if entry["type"] == "WIDE_512":
+            words = (entry["element_bits"] + 31) // 32
+            word, bitw = flat * 16 + ib // 32, ib % 32
+            run_words = words * n_elem
+            if word < run_words:
+                f2 = word // words
+                real = {"real_signal_name": entry["names"][f2 // entry["array_depth"]],
+                        "real_element": f2 % entry["array_depth"],
+                        "real_bit": (word % words) * 32 + bitw}
+            else:
+                real = self._resolve_past(entry["names"][-1],
+                                          (word - run_words) * 4 + bitw // 8, bitw % 8)
+        else:
+            nbytes = {"CDATA_8": 1, "SDATA_16": 2, "IDATA_32": 4, "QDATA_64": 8}[entry["type"]]
+            if flat < n_elem:
+                real = {"real_signal_name": entry["names"][cons], "real_element": row, "real_bit": ib}
+            else:
+                real = self._resolve_past(entry["names"][-1],
+                                          (flat - n_elem) * nbytes + ib // 8, ib % 8)
+
+        out = dict(base)
+        out.update(real)
+        out["mis_targeted"] = (real.get("real_signal_name") != base["signal_name"]
+                               or real.get("real_element") != base["element_index"]
+                               or real.get("real_bit") != base["internal_bit_index"])
+        return out
+
 
 if __name__ == "__main__":
     cli_parser = argparse.ArgumentParser(
@@ -298,6 +410,11 @@ if __name__ == "__main__":
     cli_parser.add_argument(
         "--class-name", default="Vrtlsim_shim___024root",
         help="Target implementation class name scope (default: Vrtlsim_shim___024root)"
+    )
+    cli_parser.add_argument(
+        "--legacy", action="store_true",
+        help="Report what the OLD injector (fixed 16-word WIDE stride, off-by-one "
+             "ruler lookup) really flipped: real_signal_name / real_bit / mis_targeted"
     )
 
     args = cli_parser.parse_args()
@@ -315,7 +432,8 @@ if __name__ == "__main__":
         sys.stderr.write(f"Failed to build memory map: {e}\n")
         sys.exit(1)
 
-    results = [mapper.query_bit(b) for b in bit_queries]
+    query = mapper.query_bit_legacy if args.legacy else mapper.query_bit
+    results = [query(b) for b in bit_queries]
     print(json.dumps(results, indent=2))
 
 

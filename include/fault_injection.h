@@ -22,7 +22,8 @@ struct FaultTarget {
     std::uint32_t array_depth;              // VlUnpacked depth (T_Depth). 1 if scalar variable
     std::uint32_t consecutive_count;        // How many consecutive items are grouped here
     VLDataType type;                        // Verilator primitive data type (CDATA_8, etc.)
-    std::uint32_t max_cumulato;             // Global probability ruler boundary
+    std::uint32_t max_cumulato;             // Global probability ruler boundary (exclusive end)
+    std::uint32_t elem_words;               // WIDE_512 only: 32-bit words per element (N of VlWide<N>)
 };
 
 

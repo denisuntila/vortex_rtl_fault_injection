@@ -3,10 +3,13 @@
 #include <iostream>
 #include <random>
 
-// Binary search comparator matching our probabilistic ruler boundaries
+// Binary search comparator matching our probabilistic ruler boundaries.
+// Entry k covers darts in [max_cumulato(k-1), max_cumulato(k)).
+// (Was `<`: a dart equal to max_cumulato(k-1) selected entry k-1 with
+//  local_offset == its size, i.e. one element past the end of that run.)
 struct TargetComparator {
     bool operator()(const FaultTarget& target, uint32_t dart) const {
-        return target.max_cumulato < dart;
+        return target.max_cumulato <= dart;
     }
 };
 
@@ -92,8 +95,10 @@ uint32_t inject_random_fault(Vrtlsim_shim___024root* rootp, uint32_t dart) {
             uint32_t sub_word_32 = target_bit_index / 32;
             uint32_t bit_window  = target_bit_index % 32;
 
-            // Fixed stride layout (512 bits / 32 bits = 16 words per discrete element)
-            const uint32_t words_per_element = 16;
+            // Stride = real size of one element: VlWide<N> is N 32-bit words.
+            // (Was a fixed 16 words, right only for 512-bit signals: for any other
+            //  width, flat_element_index > 0 flipped the wrong memory.)
+            const uint32_t words_per_element = it->elem_words;
 
             uint32_t flat_wide_stride = flat_element_index * words_per_element + sub_word_32;
 
@@ -120,3 +125,5 @@ uint64_t get_next_fault_time(uint64_t current_time) {
     
     return current_time + delta_cycles;
 }
+
+

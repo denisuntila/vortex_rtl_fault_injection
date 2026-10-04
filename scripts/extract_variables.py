@@ -257,16 +257,27 @@ class VerilatorCppParser:
 
         cumulative_bits = 0
         total_targets_written = 0
+        size_checks = []
 
         for struct_block in self.structs:
             if not struct_block:
                 continue
-                
+
             for data_type, element_bits, array_depth, first_name, consecutive_count in struct_block:
                 # Accumulate the true hardware bits inside the scale
                 block_total_bits = element_bits * array_depth * consecutive_count
                 cumulative_bits += block_total_bits
                 total_targets_written += 1
+
+                # 32-bit words per element: VlWide<N> has N = ceil(width / 32)
+                # words (Verilator's VL_WORDS_I). Used by the injector as the
+                # element stride for WIDE_512 targets (was a fixed 16).
+                elem_words = (element_bits + 31) // 32
+                if data_type == "WIDE_512":
+                    size_checks.append(
+                        f"static_assert(sizeof(Vrtlsim_shim___024root::{first_name}) == "
+                        f"{array_depth} * {elem_words} * 4, \"VlWide size mismatch: {first_name}\");"
+                    )
 
                 # Generate C++20 designated structural initialization block
                 entry = (
@@ -276,12 +287,16 @@ class VerilatorCppParser:
                     f"        .array_depth = {array_depth},\n"
                     f"        .consecutive_count = {consecutive_count},\n"
                     f"        .type = {data_type},\n"
-                    f"        .max_cumulato = {cumulative_bits}\n"
+                    f"        .max_cumulato = {cumulative_bits},\n"
+                    f"        .elem_words = {elem_words}\n"
                     f"    }},"
                 )
                 cpp_lines.append(entry)
 
         cpp_lines.append("};\n")
+        # compile-time check that the stride assumption matches the real layout
+        cpp_lines.extend(sorted(set(size_checks)))
+        cpp_lines.append("")
         cpp_lines.append(f"const size_t FAULT_RULER_SIZE = {total_targets_written};")
         cpp_lines.append(f"const uint32_t BIT_TOTALI_VORTEX = {cumulative_bits};")
 

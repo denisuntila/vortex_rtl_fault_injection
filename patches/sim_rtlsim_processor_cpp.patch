@@ -1,18 +1,21 @@
---- processor.cpp
-+++ processor.cpp
-@@ -35,6 +35,11 @@
+diff --git a/sim/rtlsim/processor.cpp b/sim/rtlsim/processor.cpp
+index 7c830b01a..1fa5a6d61 100644
+--- a/sim/rtlsim/processor.cpp
++++ b/sim/rtlsim/processor.cpp
+@@ -35,6 +35,12 @@
  #include <dram_sim.h>
  #include <util.h>
  
 +#include "Vrtlsim_shim___024root.h"
 +#include "fault_injection.h"
++#include "fault_trace.h"
 +#include <cstdlib>
 +#include <random>
 +
  #ifndef MEM_CLOCK_RATIO
  #define MEM_CLOCK_RATIO 1
  #endif
-@@ -104,6 +109,10 @@
+@@ -104,6 +110,13 @@ public:
      // create RTL module instance
      device_ = new Vrtlsim_shim();
  
@@ -20,10 +23,24 @@
 +    // falls back to default random fault schedule if unset/invalid
 +    this->configure_fault_injection();
 +
++    // optional warp-control trace (FAULT_TRACE_FILE / _START / _STOP)
++    trace_.configure();
++
    #ifdef VCD_OUTPUT
      Verilated::traceEverOn(true);
      tfp_ = new VerilatedVcdC();
-@@ -185,6 +194,88 @@
+@@ -168,6 +181,10 @@ public:
+       this->tick();
+     }
+ 
++    // kernel length, needed to size the injection time windows
++    std::cerr << "[sim] kernel end timestamp=" << timestamp << std::endl;
++    trace_.end(timestamp);
++
+     // stop
+     device_->reset = 1;
+ 
+@@ -185,6 +202,88 @@ public:
  
  private:
  
@@ -112,7 +129,7 @@
    void reset() {
      this->mem_bus_reset();
      this->dcr_bus_reset();
-@@ -210,6 +301,14 @@
+@@ -210,6 +309,16 @@ private:
      }
    }
  
@@ -124,10 +141,12 @@
 +
 +  uint64_t next_fault_timestamp = 150;
 +
++  FaultTrace trace_;
++
    void tick() {
  
      device_->clk = 0;
-@@ -220,6 +319,22 @@
+@@ -220,6 +329,25 @@ private:
      device_->clk = 1;
      this->eval();
  
@@ -146,6 +165,9 @@
 +        next_fault_timestamp = get_next_fault_time(timestamp);
 +      }
 +    }
++
++    // sampled after the (possible) injection, so the flip is visible at its timestamp
++    trace_.sample(device_->rootp, timestamp);
 +
      this->mem_bus_eval(1);
  
