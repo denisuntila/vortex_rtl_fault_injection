@@ -123,7 +123,7 @@ def run_command(command: str, cwd: str, timeout: int) -> Tuple[str, int]:
         proc = subprocess.run(
             argv, env=env, cwd=cwd,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, timeout=timeout,
+            text=True, errors="replace", timeout=timeout,
         )
         return proc.stdout or "", proc.returncode
     except FileNotFoundError:
@@ -289,6 +289,45 @@ def insert_sdc(conn: sqlite3.Connection, run_id: int, result: Dict[str, Any]) ->
     )
 
 
+SENTINEL_EXTRA = [  # recovery columns (ocl_sentinel -e N); added to older DBs on the fly
+    ("status_before", "TEXT"), ("divergent_before", "INT"), ("lanes_before", "INT"),
+    ("rec_tries", "INT"), ("rec_groups", "INT"), ("rec_elements", "INT"), ("rec_unresolved", "INT"),
+]
+
+
+def ensure_sentinel_table(conn: sqlite3.Connection) -> None:
+    conn.execute("CREATE TABLE IF NOT EXISTS Sentinel(run_id INTEGER PRIMARY KEY, alarm INT, "
+                 "bad_value INT, missing INT, bad_tmask INT, slots INT)")
+    have = {r[1] for r in conn.execute("PRAGMA table_info(Sentinel)")}
+    for name, typ in SENTINEL_EXTRA:
+        if name not in have:
+            try:
+                conn.execute(f"ALTER TABLE Sentinel ADD COLUMN {name} {typ}")
+            except sqlite3.OperationalError:
+                pass  # added meanwhile by a parallel runner
+
+
+def insert_sentinel(conn: sqlite3.Connection, run_id: int, result: Dict[str, Any]) -> None:
+    """ocl_sentinel only: outcome of the sentinel-lane checks (absent for other
+    tests and for runs that crashed or timed out before printing their status).
+    With recovery (-e N) also the outcome BEFORE recovery and what was relaunched;
+    Run.outcome is then the outcome AFTER recovery."""
+    if "sentinel_alarm" not in result:
+        return
+    s = result.get("sentinel") or {}
+    r = result.get("recovery") or {}
+    unresolved = r.get("unresolved")
+    conn.execute(
+        "INSERT INTO Sentinel (run_id, alarm, bad_value, missing, bad_tmask, slots, status_before, "
+        "divergent_before, lanes_before, rec_tries, rec_groups, rec_elements, rec_unresolved) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (run_id, int(bool(result["sentinel_alarm"])), s.get("bad_value"), s.get("missing"),
+         s.get("bad_tmask"), s.get("slots"), r.get("status_before"), r.get("divergent_before"),
+         r.get("lanes_before"), r.get("tries"), r.get("groups"), r.get("elements"),
+         None if unresolved is None else int(bool(unresolved)))
+    )
+
+
 def insert_crash(conn: sqlite3.Connection, run_id: int, result: Dict[str, Any], save_log: bool) -> None:
     message = result.get("message")
     conn.execute(
@@ -332,6 +371,9 @@ def main():
 
     conn = connect_db(args.db)
     init_db(conn, args.schema)
+    # sentinel results (ocl_sentinel); created here so existing DBs and
+    # schema.sql need no change
+    ensure_sentinel_table(conn)
     cid = get_campaign(conn, args)
 
     #print(f"Running: {args.command}  (cwd={args.cwd})")
@@ -356,6 +398,7 @@ def main():
         insert_sdc(conn, run_id, result)
     elif result["status"] in ("crash", "timeout"):
         insert_crash(conn, run_id, result, args.save_crash_log)
+    insert_sentinel(conn, run_id, result)
 
     conn.commit()
     conn.close()

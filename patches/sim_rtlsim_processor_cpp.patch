@@ -1,8 +1,8 @@
 diff --git a/sim/rtlsim/processor.cpp b/sim/rtlsim/processor.cpp
-index 7c830b01a..1fa5a6d61 100644
+index 7c830b0..68714bf 100644
 --- a/sim/rtlsim/processor.cpp
 +++ b/sim/rtlsim/processor.cpp
-@@ -35,6 +35,12 @@
+@@ -35,6 +35,14 @@
  #include <dram_sim.h>
  #include <util.h>
  
@@ -11,11 +11,13 @@ index 7c830b01a..1fa5a6d61 100644
 +#include "fault_trace.h"
 +#include <cstdlib>
 +#include <random>
++#include <algorithm>
++#include <set>
 +
  #ifndef MEM_CLOCK_RATIO
  #define MEM_CLOCK_RATIO 1
  #endif
-@@ -104,6 +110,13 @@ public:
+@@ -104,6 +112,13 @@ public:
      // create RTL module instance
      device_ = new Vrtlsim_shim();
  
@@ -29,7 +31,7 @@ index 7c830b01a..1fa5a6d61 100644
    #ifdef VCD_OUTPUT
      Verilated::traceEverOn(true);
      tfp_ = new VerilatedVcdC();
-@@ -168,6 +181,10 @@ public:
+@@ -168,6 +183,10 @@ public:
        this->tick();
      }
  
@@ -40,22 +42,131 @@ index 7c830b01a..1fa5a6d61 100644
      // stop
      device_->reset = 1;
  
-@@ -185,6 +202,88 @@ public:
+@@ -185,6 +204,197 @@ public:
  
  private:
  
 +  // Configures fault injection from the environment, in priority order:
 +  //   1) FAULT_TIMESTAMP + FAULT_BIT_INDEX -> deterministic single-shot:
 +  //      exactly one fault, at the exact timestamp, with the exact dart.
-+  //   2) FAULT_RANDOM_MAX_TIMESTAMP -> random single-shot: exactly one
++  //   2) FAULT_MULTI_BITS -> multi-injection: K faults in the same run on a
++  //      fixed bit (or a bit drawn per fault from a range), see
++  //      configure_multi_fault().
++  //   3) FAULT_RANDOM_MAX_TIMESTAMP -> random single-shot: exactly one
 +  //      fault, at a timestamp drawn uniformly from [150, max], with a
 +  //      randomly chosen dart (same as the default schedule's draw).
-+  //   3) neither -> default continuous random fault schedule (unchanged).
++  //   4) none -> default continuous random fault schedule (unchanged).
 +  void configure_fault_injection() {
 +    if (this->configure_deterministic_fault()) {
 +      return;
 +    }
++    if (this->configure_multi_fault()) {
++      return;
++    }
 +    this->configure_random_single_shot_fault();
++  }
++
++  // Multi-injection mode (accelerated campaigns on small structures).
++  //   FAULT_MULTI_BITS        "B"     -> every fault flips ruler index B
++  //                           "L-H"   -> each fault flips an index drawn
++  //                                      uniformly from [L, H]
++  //   FAULT_MULTI_TIMESTAMPS  "t1,t2,..." explicit schedule (testing), or
++  //   FAULT_MULTI_COUNT=K + FAULT_RANDOM_MAX_TIMESTAMP=MAX
++  //                           -> K distinct EVEN timestamps drawn uniformly
++  //                              from [150, MAX] (injection only happens on
++  //                              even timestamps, see tick()).
++  // Each fault prints the usual {"type":"injection",...} line, so the runner
++  // stores all of them in the Injection table. Returns false (and the next
++  // mode is tried) if FAULT_MULTI_BITS is unset or invalid.
++  bool configure_multi_fault() {
++    const char* bits_env = std::getenv("FAULT_MULTI_BITS");
++    if (!bits_env) {
++      return false;
++    }
++
++    // ---- bits: "B" or "L-H" ----
++    uint64_t lo = 0, hi = 0;
++    {
++      std::string spec(bits_env);
++      auto dash = spec.find('-');
++      char* end = nullptr;
++      std::string a = spec.substr(0, dash);
++      lo = std::strtoull(a.c_str(), &end, 10);
++      bool ok = !a.empty() && *end == '\0';
++      hi = lo;
++      if (dash != std::string::npos) {
++        std::string b = spec.substr(dash + 1);
++        hi = std::strtoull(b.c_str(), &end, 10);
++        ok = ok && !b.empty() && *end == '\0';
++      }
++      if (!ok || lo > hi || hi >= BIT_TOTALI_VORTEX) {
++        std::cerr << "[Fault Injection] Error: FAULT_MULTI_BITS='" << bits_env
++                  << "' is not 'B' or 'L-H' with L <= H < " << BIT_TOTALI_VORTEX
++                  << "; aborting." << std::endl;
++        std::exit(2);
++      }
++    }
++
++    std::mt19937_64 gen(std::random_device{}());
++    std::vector<uint64_t> times;
++
++    // ---- timestamps: explicit list, or K random distinct even values ----
++    const char* list_env = std::getenv("FAULT_MULTI_TIMESTAMPS");
++    if (list_env) {
++      std::stringstream ss(list_env);
++      std::string tok;
++      while (std::getline(ss, tok, ',')) {
++        char* end = nullptr;
++        uint64_t t = std::strtoull(tok.c_str(), &end, 10);
++        if (tok.empty() || *end != '\0') {
++          std::cerr << "[Fault Injection] Error: bad FAULT_MULTI_TIMESTAMPS entry '" << tok
++                    << "'; aborting." << std::endl;
++          std::exit(2);
++        }
++        times.push_back(t);
++      }
++    } else {
++      const char* k_env   = std::getenv("FAULT_MULTI_COUNT");
++      const char* max_env = std::getenv("FAULT_RANDOM_MAX_TIMESTAMP");
++      char* end1 = nullptr;
++      char* end2 = nullptr;
++      uint64_t k   = k_env   ? std::strtoull(k_env, &end1, 10) : 0;
++      uint64_t max = max_env ? std::strtoull(max_env, &end2, 10) : 0;
++      const uint64_t min_ts = 150;
++      bool ok = k_env && max_env && *end1 == '\0' && *end2 == '\0' && k >= 1 && max >= min_ts;
++      // even values in [min_ts, max]: 2*j for j in [ceil(min/2), floor(max/2)]
++      uint64_t jlo = (min_ts + 1) / 2, jhi = max / 2;
++      if (!ok || jhi < jlo || k > jhi - jlo + 1) {
++        std::cerr << "[Fault Injection] Error: multi mode needs FAULT_MULTI_TIMESTAMPS, or "
++                     "FAULT_MULTI_COUNT=K >= 1 and FAULT_RANDOM_MAX_TIMESTAMP >= " << min_ts
++                  << " with K <= number of even timestamps; aborting." << std::endl;
++        std::exit(2);
++      }
++      std::uniform_int_distribution<uint64_t> dist(jlo, jhi);
++      std::set<uint64_t> drawn;
++      while (drawn.size() < k) {
++        drawn.insert(2 * dist(gen));
++      }
++      times.assign(drawn.begin(), drawn.end());
++    }
++    std::sort(times.begin(), times.end());
++
++    // ---- one dart per fault ----
++    std::uniform_int_distribution<uint64_t> bit_dist(lo, hi);
++    multi_schedule_.clear();
++    for (uint64_t t : times) {
++      multi_schedule_.emplace_back(t, static_cast<uint32_t>(lo == hi ? lo : bit_dist(gen)));
++    }
++    multi_next_ = 0;
++    multi_mode_ = true;
++
++    std::cerr << "[Fault Injection] Multi-injection mode: " << multi_schedule_.size()
++              << " faults, bits " << lo << (lo == hi ? "" : "-" + std::to_string(hi)) << ", timestamps";
++    for (auto& f : multi_schedule_) {
++      std::cerr << " " << f.first;
++    }
++    std::cerr << std::endl;
++    return true;
 +  }
 +
 +  // Returns true if deterministic single-shot mode was successfully
@@ -129,7 +240,7 @@ index 7c830b01a..1fa5a6d61 100644
    void reset() {
      this->mem_bus_reset();
      this->dcr_bus_reset();
-@@ -210,6 +309,16 @@ private:
+@@ -210,6 +420,20 @@ private:
      }
    }
  
@@ -139,6 +250,10 @@ index 7c830b01a..1fa5a6d61 100644
 +  uint32_t fault_dart_ = 0;
 +  bool fault_fired_ = false;
 +
++  bool multi_mode_ = false;
++  std::vector<std::pair<uint64_t, uint32_t>> multi_schedule_;  // (timestamp, dart), sorted
++  size_t multi_next_ = 0;
++
 +  uint64_t next_fault_timestamp = 150;
 +
 +  FaultTrace trace_;
@@ -146,11 +261,20 @@ index 7c830b01a..1fa5a6d61 100644
    void tick() {
  
      device_->clk = 0;
-@@ -220,6 +329,25 @@ private:
+@@ -220,6 +444,34 @@ private:
      device_->clk = 1;
      this->eval();
  
-+    if (single_shot_mode_) {
++    if (multi_mode_) {
++      // every scheduled fault whose time has come (an odd or past timestamp
++      // fires at the first even tick at or after it, like single-shot mode)
++      while (multi_next_ < multi_schedule_.size()
++          && timestamp >= multi_schedule_[multi_next_].first) {
++        uint32_t flipped_bit_index = inject_random_fault(device_->rootp, multi_schedule_[multi_next_].second);
++        std::cout << "{\"type\":\"injection\",\"timestamp\":" << timestamp << ",\"bit_index\":" << flipped_bit_index << "}" << std::endl;
++        ++multi_next_;
++      }
++    } else if (single_shot_mode_) {
 +      if (!fault_fired_ && timestamp >= fault_timestamp_) {
 +        int flipped_bit_index = fault_dart_fixed_
 +            ? inject_random_fault(device_->rootp, fault_dart_)
