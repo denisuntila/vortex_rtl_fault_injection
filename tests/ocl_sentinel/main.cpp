@@ -174,10 +174,17 @@ bool probe_mode = false;
 bool use_csr = true; // -x: device without Vortex CSRs (e.g. pocl CPU, for testing)
 int variant = 1;     // -V: kernel variant (see kernel_sentinel.cl); 1 = no vx_pred in the loop
 int recovery = 0;    // -e N: up to N relaunches of the warps whose sentinel fired (0 = off)
+// -p: what to relaunch (with -e N)
+//   0 = the warps whose sentinel fired (any kind of alarm)
+//   1 = tiered: real elements still POISON (never written) -> those elements;
+//       wrong value / tmask -> the warps that fired; a sentinel slot never
+//       written (its store went elsewhere, damage location unknown) -> the
+//       whole kernel. The widest level wins.
+int policy = 0;
 
 static void parse_args(int argc, char **argv) {
   int c;
-  while ((c = getopt(argc, argv, "m:n:k:w:r:V:e:Pxh")) != -1) {
+  while ((c = getopt(argc, argv, "m:n:k:w:r:V:e:p:Pxh")) != -1) {
     switch (c) {
     case 'm': M = atoi(optarg); break;
     case 'n': N = atoi(optarg); break;
@@ -187,6 +194,7 @@ static void parse_args(int argc, char **argv) {
     case 'P': probe_mode = true; break;
     case 'V': variant = atoi(optarg); break;
     case 'e': recovery = atoi(optarg); break;
+    case 'p': policy = atoi(optarg); break;
     case 'x': use_csr = false; break;
     case 'h':
     default:
@@ -194,7 +202,7 @@ static void parse_args(int argc, char **argv) {
       exit(-1);
     }
   }
-  if (M <= 0 || N <= 0 || K <= 0 || W < 0 || W == 1 || R <= 0 || variant < 0 || variant > 3 || recovery < 0 || (W > 0 && R % W != 0)) {
+  if (M <= 0 || N <= 0 || K <= 0 || W < 0 || W == 1 || R <= 0 || variant < 0 || variant > 3 || recovery < 0 || policy < 0 || policy > 1 || (W > 0 && R % W != 0)) {
     output_crash_json(nullptr, -1, "Invalid geometry: need W = 0 or W >= 2, and R a multiple of W");
     exit(-1);
   }
@@ -465,15 +473,35 @@ int main (int argc, char **argv) {
     for (bool b : lane_hit) lanes_before += b;
   }
 
-  // ---- recovery: relaunch only the elements of the warps whose sentinel fired ----
+  // completeness: real elements still holding POISON were never written
+  // (work-item not executed, e.g. a lane switched off); needs no reference
+  uint32_t poison_before = 0;
+  for (uint32_t i = 0; i < c_points; ++i) poison_before += fbits(h_c[i]) == POISON_BITS;
+
+  // ---- recovery ----
+  //   policy 0: relaunch the elements of the warps whose sentinel fired
+  //   policy 1: + elements still POISON; whole kernel if a sentinel slot is missing
   int tries = 0;
   uint32_t groups = 0, rec_elements = 0;
+  bool full_relaunch = false;
   std::vector<uint32_t> todo;                       // elements of C still to recompute
-  if (recovery > 0 && W > 0 && alarm) {
-    for (uint32_t w = 0; w < fired.size(); ++w) {
-      if (!fired[w] || geo.warp_items[w].empty()) continue;
-      ++groups;
-      for (uint32_t j : geo.warp_items[w]) todo.push_back(all_elems[j]);
+  if (recovery > 0 && W > 0) {
+    if (policy == 1 && missing > 0) {
+      full_relaunch = true;
+      todo = all_elems;
+      for (auto& items : geo.warp_items) groups += !items.empty();
+    } else {
+      std::vector<bool> queued(c_points, false);
+      if (alarm) {
+        for (uint32_t w = 0; w < fired.size(); ++w) {
+          if (!fired[w] || geo.warp_items[w].empty()) continue;
+          ++groups;
+          for (uint32_t j : geo.warp_items[w]) { todo.push_back(all_elems[j]); queued[all_elems[j]] = true; }
+        }
+      }
+      if (policy == 1)
+        for (uint32_t i = 0; i < c_points; ++i)
+          if (!queued[i] && fbits(h_c[i]) == POISON_BITS) todo.push_back(i);
     }
     rec_elements = todo.size();
   }
@@ -511,10 +539,15 @@ int main (int argc, char **argv) {
     uint32_t v2, m2, k2;
     std::vector<bool> fired2 = check(g2, c2, t2, n, v2, m2, k2);
     std::vector<uint32_t> again;
-    for (uint32_t w = 0; w < fired2.size(); ++w) {
-      for (uint32_t j : g2.warp_items[w]) {
-        if (fired2[w]) again.push_back(todo[j]);    // still suspicious: next try
-        else h_c[todo[j]] = c2[j];                  // verified by its sentinel: accept
+    if (policy == 1 && m2 > 0) {
+      again = todo;                                 // a store went astray in the relaunch: trust nothing
+    } else {
+      for (uint32_t w = 0; w < fired2.size(); ++w) {
+        for (uint32_t j : g2.warp_items[w]) {
+          bool bad = fired2[w] || (policy == 1 && fbits(c2[j]) == POISON_BITS);
+          if (bad) again.push_back(todo[j]);        // still suspicious: next try
+          else h_c[todo[j]] = c2[j];                // verified by its sentinel: accept
+        }
       }
     }
     todo.swap(again);
@@ -537,7 +570,9 @@ int main (int argc, char **argv) {
             << ", \"groups\": " << groups << ", \"elements\": " << rec_elements
             << ", \"unresolved\": " << (unresolved ? "true" : "false")
             << ", \"status_before\": \"" << (passed_before ? "masked_error" : "sdc") << "\""
-            << ", \"divergent_before\": " << div_before << ", \"lanes_before\": " << lanes_before << "},\n";
+            << ", \"divergent_before\": " << div_before << ", \"lanes_before\": " << lanes_before
+            << ", \"policy\": " << policy << ", \"poison_before\": " << poison_before
+            << ", \"full_relaunch\": " << (full_relaunch ? "true" : "false") << "},\n";
   std::cout << "  \"divergent_data\": [\n";
 
   for (size_t i = 0; i < divergences.size(); ++i) {
@@ -563,3 +598,5 @@ int main (int argc, char **argv) {
 
   return passed ? 0 : 1;
 }
+
+

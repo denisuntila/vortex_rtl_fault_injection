@@ -1,0 +1,27 @@
+# Strati per la campagna di misura (fault singoli o quasi), in ordine di PRIORITA':
+# ogni strato prende i bit dei nodi che corrispondono ai pattern, MENO quelli gia' presi sopra.
+# name	runs (per kernel)	K	patterns ('*' = un livello, '**' = piu' livelli)
+#
+# --- schedule (circa 0,4% del chip, ~14% degli SDC nella campagna random) ---
+sched_ctrl	600	1	**/g_cores[*]/core/schedule/active_warps,**/g_cores[*]/core/schedule/stalled_warps,**/g_cores[*]/core/schedule/thread_masks,**/g_cores[*]/core/schedule/warp_pcs,**/g_cores[*]/core/schedule/out_buf/g_eb2/stream_buffer/g_buffer/valid_in_r,**/g_cores[*]/core/schedule/out_buf/g_eb2/stream_buffer/g_buffer/valid_out_r,**/g_cores[*]/core/schedule/out_buf/g_eb2/stream_buffer/g_buffer/data_out_r
+sched_acct	200	1	**/g_cores[*]/core/schedule/timeout_ctr,**/g_cores[*]/core/schedule/wspawn,**/g_cores[*]/core/schedule/g_pending_sizes[*]/counter/g_size_gt1/g_single_step/used_r,**/g_cores[*]/core/schedule/g_pending_sizes[*]/counter/g_size_gt1/empty_r
+sched_rest	300	10	**/g_cores[*]/core/schedule
+#
+# --- issue (circa 12,5% del chip, ~1/3 degli SDC) ---
+issue_instr	1200	3	**/g_cores[*]/core/issue/g_slices[*]/issue_slice/ibuffer,**/g_cores[*]/core/issue/g_slices[*]/issue_slice/scoreboard/g_stanging_bufs[*]/stanging_buf,**/g_cores[*]/core/issue/g_slices[*]/issue_slice/scoreboard/out_arb
+issue_sb_rest	300	3	**/g_cores[*]/core/issue/g_slices[*]/issue_slice/scoreboard
+issue_gpr	800	10	**/g_cores[*]/core/issue/g_slices[*]/issue_slice/operands/g_collectors[*]/opc_unit/g_gpr_rams[*]/gpr_ram
+issue_dispatch	600	5	**/g_cores[*]/core/issue/g_slices[*]/issue_slice/dispatch/g_buffers[*]/buffer/g_eb2/stream_buffer/g_buffer
+issue_operands	800	5	**/g_cores[*]/core/issue/g_slices[*]/issue_slice/operands/g_collectors[*]/opc_unit
+issue_rest	500	20	**/g_cores[*]/core/issue
+#
+# --- resto dei core (non esplorati con la ricerca: strati a livello di modulo) ---
+execute	2000	5	**/g_cores[*]/core/execute
+commit	300	5	**/g_cores[*]/core/commit
+mem_unit	800	20	**/g_cores[*]/core/mem_unit
+core_rest	1000	5	**/g_cores[*]/core
+#
+# --- cache e resto del chip ---
+dcache	600	10	**/socket/dcache
+icache	500	10	**/socket/icache
+rest	300	20	REST

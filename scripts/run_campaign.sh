@@ -32,16 +32,16 @@ set -uo pipefail
 NUM_RUNS_DEFAULT=500
 DB="${DB:-tests/ocl_test/campaign.db}"
 SCHEMA="${SCHEMA:-tests/ocl_test/schema.sql}"
-TEST_NAME="sgemm_seu"
+TEST_NAME="${TEST_NAME:-sgemm_seu}"
 CORES=2
 WARPS=2
 THREADS=8
 CWD="build/tests/opencl/ocl_test"
-TIMEOUT=30
+TIMEOUT="${TIMEOUT:-30}"
 
 # ---- Env vars + binary invocation, unchanged from the original command ----
 ENV_COMMON='LD_LIBRARY_PATH=/root/tools/pocl/lib:/workspace/build/runtime:/root/tools/llvm-vortex/lib: POCL_VORTEX_XLEN=32 LLVM_PREFIX=/root/tools/llvm-vortex POCL_VORTEX_BINTOOL="OBJCOPY=/root/tools/llvm-vortex/bin/llvm-objcopy /workspace/vortex/kernel/scripts/vxbin.py" POCL_VORTEX_CFLAGS="-march=rv32imaf -mabi=ilp32f -O3 -mcmodel=medany --sysroot=/root/tools/riscv32-gnu-toolchain/riscv32-unknown-elf --gcc-toolchain=/root/tools/riscv32-gnu-toolchain -fno-rtti -fno-exceptions -nostartfiles -nostdlib -fdata-sections -ffunction-sections -I/workspace/build/hw -I/workspace/vortex/kernel/include -DXLEN_32 -DNDEBUG  -Xclang -target-feature -Xclang +vortex -Xclang -target-feature -Xclang +zicond -mllvm -disable-loop-idiom-all      " POCL_VORTEX_LDFLAGS="-Wl,-Bstatic,--gc-sections,-T/workspace/vortex/kernel/scripts/link32.ld,--defsym=STARTUP_ADDR=0x80000000 /workspace/build/kernel/libvortex.a -L/root/tools/libc32/lib -lm -lc /root/tools/libcrt32/lib/baremetal/libclang_rt.builtins-riscv32.a" VORTEX_DRIVER=rtlsim'
-BINARY_CMD='./ocl_test -n16 -m16 -k16'
+BINARY_CMD="${BINARY_CMD:-./ocl_test -n16 -m16 -k16}"
 
 # run_one <fault_env_prefix> <run_index> <total_runs>
 # fault_env_prefix must already include a trailing space if non-empty,

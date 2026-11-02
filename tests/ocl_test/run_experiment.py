@@ -292,6 +292,7 @@ def insert_sdc(conn: sqlite3.Connection, run_id: int, result: Dict[str, Any]) ->
 SENTINEL_EXTRA = [  # recovery columns (ocl_sentinel -e N); added to older DBs on the fly
     ("status_before", "TEXT"), ("divergent_before", "INT"), ("lanes_before", "INT"),
     ("rec_tries", "INT"), ("rec_groups", "INT"), ("rec_elements", "INT"), ("rec_unresolved", "INT"),
+    ("rec_policy", "INT"), ("poison_before", "INT"), ("full_relaunch", "INT"),  # ocl_sentinel -p
 ]
 
 
@@ -319,12 +320,15 @@ def insert_sentinel(conn: sqlite3.Connection, run_id: int, result: Dict[str, Any
     unresolved = r.get("unresolved")
     conn.execute(
         "INSERT INTO Sentinel (run_id, alarm, bad_value, missing, bad_tmask, slots, status_before, "
-        "divergent_before, lanes_before, rec_tries, rec_groups, rec_elements, rec_unresolved) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "divergent_before, lanes_before, rec_tries, rec_groups, rec_elements, rec_unresolved, "
+        "rec_policy, poison_before, full_relaunch) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (run_id, int(bool(result["sentinel_alarm"])), s.get("bad_value"), s.get("missing"),
          s.get("bad_tmask"), s.get("slots"), r.get("status_before"), r.get("divergent_before"),
          r.get("lanes_before"), r.get("tries"), r.get("groups"), r.get("elements"),
-         None if unresolved is None else int(bool(unresolved)))
+         None if unresolved is None else int(bool(unresolved)),
+         r.get("policy"), r.get("poison_before"),
+         None if r.get("full_relaunch") is None else int(bool(r.get("full_relaunch"))))
     )
 
 

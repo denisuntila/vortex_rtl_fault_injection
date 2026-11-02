@@ -14,6 +14,7 @@ Kernels (golden end timestamp - 100 = latest injection time):
   v1  ./ocl_sentinel -n16 -m16 -k16        (with sentinel)     max_ts 70098
   w0  ./ocl_sentinel -w0 -n16 -m16 -k16    (no sentinel lanes) max_ts 67764
   v1r ./ocl_sentinel -e 1 -n16 -m16 -k16   (sentinel + relaunch of the flagged warps)
+  v1r2 ./ocl_sentinel -e 1 -p 1 -n16 -m16 -k16  (tiered recovery: POISON / warps / whole kernel)
 
 Usage (repo root, inside the container):
   python3 scripts/measure_strata.py --strata strata.json --db tests/ocl_test/strata.db \\
@@ -37,6 +38,8 @@ KERNELS = {
     # with recovery: the warps whose sentinel fired are relaunched (once); faults
     # are injected only in the first launch (same window as v1)
     "v1r": ("./ocl_sentinel -e 1 -n16 -m16 -k16", 70098),
+    # tiered recovery (-p 1): POISON elements / flagged warps / whole kernel if a slot is missing
+    "v1r2": ("./ocl_sentinel -e 1 -p 1 -n16 -m16 -k16", 70098),
 }
 ENV_COMMON = ('LD_LIBRARY_PATH=/root/tools/pocl/lib:/workspace/build/runtime:/root/tools/llvm-vortex/lib: '
               'POCL_VORTEX_XLEN=32 LLVM_PREFIX=/root/tools/llvm-vortex '
